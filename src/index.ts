@@ -19,6 +19,7 @@ let GROUP_QUEUES: Record<string, QueueEntry[]> = {}
 
 // Main entrypoint
 ;(async () => {
+  Logger.setDebug(false)
   Logger.info(Color.Yellow, '🤖 Starting ...')
 
   // Schedule daily queue reset at 6am Dublin Time
@@ -104,22 +105,22 @@ async function processUserMessage(
   socket: WASocket,
 ) {
   if (!m.messages || m.messages.length == 0) {
-    Logger.info('No messages, ignoring')
+    Logger.debug('No messages, ignoring')
     return
   }
   const msg = m.messages[0]
   if (!msg.message) {
-    Logger.info('No message, ignoring')
+    Logger.debug('No message, ignoring')
     return
   }
-  Logger.info('Message: ' + JSON.stringify(msg))
+  Logger.debug('Message: ' + JSON.stringify(msg))
   if (msg.key.fromMe) {
-    Logger.info('Own message, ignoring')
+    Logger.debug('Own message, ignoring')
     return
   }
-  const userName = msg.pushName
-  if (!userName || userName.length === 0) {
-    Logger.info('No userName name, ignoring')
+  const username = msg.pushName
+  if (!username || username.length === 0) {
+    Logger.debug('No user name, ignoring')
     return
   }
   const text =
@@ -128,18 +129,18 @@ async function processUserMessage(
     msg.message.ephemeralMessage?.message?.conversation ||
     msg.message.ephemeralMessage?.message?.extendedTextMessage?.text
   if (!text?.startsWith('/')) {
-    Logger.info('Not a command, ignoring')
+    Logger.debug('Not a command, ignoring')
     return
   }
   const groupId = msg.key.remoteJid
   if (!groupId) {
-    Logger.info('Not from a group, ignoring')
+    Logger.debug('Not from a group, ignoring')
     return
   }
   Logger.info(Color.Green, `Command: ${text}`)
-  Logger.info(Color.Green, `User: ${userName}`)
+  Logger.info(Color.Green, `User: ${username}`)
   Logger.info(Color.Green, `Group: ${groupId}`)
-  await handleCommand(groupId, socket, text, userName)
+  await handleCommand(groupId, socket, text, username)
 }
 
 async function handleCommand(
