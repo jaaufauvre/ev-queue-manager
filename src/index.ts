@@ -16,6 +16,7 @@ interface QueueEntry {
 }
 
 let GROUP_QUEUES: Record<string, QueueEntry[]> = {}
+const PROCESSED_MESSAGES = new Set()
 
 // Main entrypoint
 ;(async () => {
@@ -28,6 +29,7 @@ let GROUP_QUEUES: Record<string, QueueEntry[]> = {}
     () => {
       Logger.info(Color.Yellow, '🕓 Scheduled queue reset')
       GROUP_QUEUES = {}
+      PROCESSED_MESSAGES.clear()
     },
     { timezone: 'Europe/Dublin' },
   )
@@ -108,39 +110,50 @@ async function processUserMessage(
     Logger.debug('No messages, ignoring')
     return
   }
-  const msg = m.messages[0]
-  if (!msg.message) {
-    Logger.debug('No message, ignoring')
+  if (m.type != 'notify') {
+    Logger.debug('Not new messages, ignoring')
     return
   }
-  Logger.debug('Message: ' + JSON.stringify(msg))
-  if (msg.key.fromMe) {
-    Logger.debug('Own message, ignoring')
-    return
+  for (const msg of m.messages) {
+    if (!msg.message) {
+      Logger.debug('No message, ignoring')
+      return
+    }
+    const groupId = msg.key.remoteJid
+    if (!groupId) {
+      Logger.debug('Not from a group, ignoring')
+      return
+    }
+    Logger.debug('Message: ' + JSON.stringify(msg))
+    if (msg.key.fromMe) {
+      Logger.debug('Own message, ignoring')
+      return
+    }
+    const username = msg.pushName
+    if (!username || username.length === 0) {
+      Logger.debug('No user name, ignoring')
+      return
+    }
+    const text =
+      msg.message.conversation ||
+      msg.message.extendedTextMessage?.text ||
+      msg.message.ephemeralMessage?.message?.conversation ||
+      msg.message.ephemeralMessage?.message?.extendedTextMessage?.text
+    if (!text?.startsWith('/')) {
+      Logger.debug('Not a command, ignoring')
+      return
+    }
+    const uniqueId = `${msg.key.remoteJid}|${msg.key.id}`
+    if (PROCESSED_MESSAGES.has(uniqueId)) {
+      Logger.debug('Message ID already processed, ignoring')
+      return
+    }
+    PROCESSED_MESSAGES.add(uniqueId)
+    Logger.info(Color.Green, `Command: ${text}`)
+    Logger.info(Color.Green, `User: ${username}`)
+    Logger.info(Color.Green, `Group: ${groupId}`)
+    await handleCommand(groupId, socket, text, username)
   }
-  const username = msg.pushName
-  if (!username || username.length === 0) {
-    Logger.debug('No user name, ignoring')
-    return
-  }
-  const text =
-    msg.message.conversation ||
-    msg.message.extendedTextMessage?.text ||
-    msg.message.ephemeralMessage?.message?.conversation ||
-    msg.message.ephemeralMessage?.message?.extendedTextMessage?.text
-  if (!text?.startsWith('/')) {
-    Logger.debug('Not a command, ignoring')
-    return
-  }
-  const groupId = msg.key.remoteJid
-  if (!groupId) {
-    Logger.debug('Not from a group, ignoring')
-    return
-  }
-  Logger.info(Color.Green, `Command: ${text}`)
-  Logger.info(Color.Green, `User: ${username}`)
-  Logger.info(Color.Green, `Group: ${groupId}`)
-  await handleCommand(groupId, socket, text, username)
 }
 
 async function handleCommand(
