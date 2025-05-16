@@ -276,7 +276,7 @@ function formatQueue(groupId: string) {
 }
 
 async function replyInGroup(groupId: string, socket: WASocket, text: string) {
-  await socket.sendMessage(groupId, { text })
+  await socket.sendMessage(groupId, { text }, { ephemeralExpiration: 86400 }) // 24 hours
 }
 
 async function reactInGroup(
