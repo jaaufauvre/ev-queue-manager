@@ -172,7 +172,7 @@ async function handleCommand(
 ) {
   switch (command.toLowerCase().trim()) {
     case '/help':
-      return replyInGroup(
+      await replyInGroup(
         groupId,
         socket,
         `Available commands:
@@ -181,6 +181,8 @@ async function handleCommand(
 * \`/leave\` – Exit the queue
 * \`/queue\` – Display the queue`,
       )
+      await reactInGroup(groupId, messageKey, socket, '🆘')
+      break
 
     case '/join':
       if (!isUserInQueue(groupId, username)) {
