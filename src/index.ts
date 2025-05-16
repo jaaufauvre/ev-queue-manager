@@ -13,7 +13,8 @@ import {
 import IMessageKey = proto.IMessageKey
 
 interface QueueEntry {
-  id: string
+  userId: string
+  username: string
   joined: number
 }
 
@@ -141,6 +142,11 @@ async function processUserMessage(
       Logger.debug('No user name, ignoring')
       return
     }
+    const userId = msg.key.participant
+    if (!userId || userId.length === 0) {
+      Logger.debug('No user ID, ignoring')
+      return
+    }
     const text =
       msg.message.conversation ||
       msg.message.extendedTextMessage?.text ||
@@ -157,9 +163,10 @@ async function processUserMessage(
     }
     PROCESSED_MESSAGES.add(uniqueId)
     Logger.info(Color.Green, `Command: ${text}`)
-    Logger.info(Color.Green, `User: ${username}`)
-    Logger.info(Color.Green, `Group: ${groupId}`)
-    await handleCommand(groupId, messageKey, socket, text, username)
+    Logger.info(Color.Green, `Username: ${username}`)
+    Logger.info(Color.Green, `User ID: ${userId}`)
+    Logger.info(Color.Green, `Group ID: ${groupId}`)
+    await handleCommand(groupId, messageKey, socket, text, userId, username)
   }
 }
 
@@ -168,6 +175,7 @@ async function handleCommand(
   messageKey: IMessageKey,
   socket: WASocket,
   command: string,
+  userId: string,
   username: string,
 ) {
   switch (command.toLowerCase().trim()) {
@@ -185,55 +193,64 @@ async function handleCommand(
       break
 
     case '/join':
-      if (!isUserInQueue(groupId, username)) {
-        addUserToQueue(groupId, username)
+      if (!isUserInQueue(groupId, userId)) {
+        addUserToQueue(groupId, userId, username)
         await replyInGroup(
           groupId,
           socket,
-          `${username} joined the queue:\n${formatQueue(groupId)}`,
+          `${username} joined the queue:\n${formatQueueWithMentions(groupId)}`,
+          getQueueMentions(groupId),
         )
         await reactInGroup(groupId, messageKey, socket, '👍')
       } else {
-        await reactInGroup(groupId, messageKey, socket, '❌')
         await replyInGroup(
           groupId,
           socket,
-          `${username}, you're already in the queue:\n${formatQueue(groupId)}`,
+          `${username}, you're already in the queue:\n${formatQueueWithMentions(groupId)}`,
+          getQueueMentions(groupId),
         )
+        await reactInGroup(groupId, messageKey, socket, '❌')
       }
       break
 
     case '/leave':
-      if (!isUserInQueue(groupId, username)) {
-        await reactInGroup(groupId, messageKey, socket, '❌')
+      if (!isUserInQueue(groupId, userId)) {
         await replyInGroup(
           groupId,
           socket,
-          `${username}, you're not in the queue:\n${formatQueue(groupId)}`,
+          `${username}, you're not in the queue:\n${formatQueueWithMentions(groupId)}`,
+          getQueueMentions(groupId),
         )
+        await reactInGroup(groupId, messageKey, socket, '❌')
       } else {
-        removeUserFromQueue(groupId, username)
+        removeUserFromQueue(groupId, userId)
         await replyInGroup(
           groupId,
           socket,
-          `${username} left the queue:\n${formatQueue(groupId)}`,
+          `${username} left the queue:\n${formatQueueWithMentions(groupId)}`,
+          getQueueMentions(groupId),
         )
         await reactInGroup(groupId, messageKey, socket, '👋')
       }
       break
 
     case '/queue':
-      await replyInGroup(groupId, socket, `Queue:\n${formatQueue(groupId)}`)
+      await replyInGroup(
+        groupId,
+        socket,
+        `Queue:\n${formatQueueWithMentions(groupId)}`,
+        getQueueMentions(groupId),
+      )
       await reactInGroup(groupId, messageKey, socket, '👀')
       break
 
     default:
-      await reactInGroup(groupId, messageKey, socket, '❌')
       await replyInGroup(
         groupId,
         socket,
         `Unknown command. Type \`/help\` for the list of commands.`,
       )
+      await reactInGroup(groupId, messageKey, socket, '❌')
   }
 }
 
@@ -248,37 +265,59 @@ function setGroupQueue(groupId: string, queue: QueueEntry[]) {
   GROUP_QUEUES[groupId] = queue
 }
 
-function isUserInQueue(groupId: string, username: string) {
-  return getGroupQueue(groupId).find((q) => q.id === username)
+function isUserInQueue(groupId: string, userId: string) {
+  return getGroupQueue(groupId).find((entry) => entry.userId === userId)
 }
 
-function addUserToQueue(groupId: string, username: string) {
-  getGroupQueue(groupId).push({ id: username, joined: Date.now() })
+function addUserToQueue(groupId: string, userId: string, username: string) {
+  getGroupQueue(groupId).push({
+    userId: userId,
+    username: username,
+    joined: Date.now(),
+  })
 }
 
-function removeUserFromQueue(groupId: string, username: string) {
+function removeUserFromQueue(groupId: string, userId: string) {
   const queue = getGroupQueue(groupId)
   setGroupQueue(
     groupId,
-    queue.filter((q) => q.id !== username),
+    queue.filter((entry) => entry.userId !== userId),
   )
+}
+
+function userIdToMention(userId: string): string {
+  const numberPart = userId.split('@')[0]
+  return `@${numberPart}`
 }
 
 function logQueue(groupId: string) {
   Logger.info(Color.Yellow, 'Queue: ' + JSON.stringify(getGroupQueue(groupId)))
 }
 
-function formatQueue(groupId: string) {
+function formatQueueWithMentions(groupId: string) {
   logQueue(groupId)
   return (
     getGroupQueue(groupId)
-      .map((q, i) => `${i + 1}. ${q.id}`)
+      .map((entry, i) => `${i + 1}. ${userIdToMention(entry.userId)}`)
       .join('\n') || '—'
   )
 }
 
-async function replyInGroup(groupId: string, socket: WASocket, text: string) {
-  await socket.sendMessage(groupId, { text }, { ephemeralExpiration: 86400 }) // 24 hours
+function getQueueMentions(groupId: string): string[] {
+  return getGroupQueue(groupId).map((entry) => entry.userId)
+}
+
+async function replyInGroup(
+  groupId: string,
+  socket: WASocket,
+  text: string,
+  mentions: string[] = [],
+) {
+  await socket.sendMessage(
+    groupId,
+    { text: text, mentions: mentions },
+    { ephemeralExpiration: 86400 }, // 24 hours
+  )
 }
 
 async function reactInGroup(
