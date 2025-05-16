@@ -8,7 +8,9 @@ import {
   Browsers,
   WAMessage,
   MessageUpsertType,
+  proto,
 } from '@whiskeysockets/baileys'
+import IMessageKey = proto.IMessageKey
 
 interface QueueEntry {
   id: string
@@ -119,6 +121,11 @@ async function processUserMessage(
       Logger.debug('No message, ignoring')
       return
     }
+    const messageKey = msg.key
+    if (!messageKey) {
+      Logger.debug('No key for message, ignoring')
+      return
+    }
     const groupId = msg.key.remoteJid
     if (!groupId) {
       Logger.debug('Not from a group, ignoring')
@@ -143,7 +150,7 @@ async function processUserMessage(
       Logger.debug('Not a command, ignoring')
       return
     }
-    const uniqueId = `${msg.key.remoteJid}|${msg.key.id}`
+    const uniqueId = `${groupId}|${messageKey.id}`
     if (PROCESSED_MESSAGES.has(uniqueId)) {
       Logger.debug('Message ID already processed, ignoring')
       return
@@ -152,12 +159,13 @@ async function processUserMessage(
     Logger.info(Color.Green, `Command: ${text}`)
     Logger.info(Color.Green, `User: ${username}`)
     Logger.info(Color.Green, `Group: ${groupId}`)
-    await handleCommand(groupId, socket, text, username)
+    await handleCommand(groupId, messageKey, socket, text, username)
   }
 }
 
 async function handleCommand(
   groupId: string,
+  messageKey: IMessageKey,
   socket: WASocket,
   command: string,
   username: string,
@@ -182,7 +190,9 @@ async function handleCommand(
           socket,
           `${username} joined the queue:\n${formatQueue(groupId)}`,
         )
+        await reactInGroup(groupId, messageKey, socket, '👍')
       } else {
+        await reactInGroup(groupId, messageKey, socket, '❌')
         await replyInGroup(
           groupId,
           socket,
@@ -193,6 +203,7 @@ async function handleCommand(
 
     case '/leave':
       if (!isUserInQueue(groupId, username)) {
+        await reactInGroup(groupId, messageKey, socket, '❌')
         await replyInGroup(
           groupId,
           socket,
@@ -205,15 +216,18 @@ async function handleCommand(
           socket,
           `${username} left the queue:\n${formatQueue(groupId)}`,
         )
+        await reactInGroup(groupId, messageKey, socket, '👋')
       }
       break
 
     case '/queue':
       await replyInGroup(groupId, socket, `Queue:\n${formatQueue(groupId)}`)
+      await reactInGroup(groupId, messageKey, socket, '👀')
       break
 
     default:
-      return replyInGroup(
+      await reactInGroup(groupId, messageKey, socket, '❌')
+      await replyInGroup(
         groupId,
         socket,
         `Unknown command. Type \`/help\` for the list of commands.`,
@@ -261,6 +275,20 @@ function formatQueue(groupId: string) {
   )
 }
 
-async function replyInGroup(groupId: string, client: WASocket, text: string) {
-  await client.sendMessage(groupId, { text })
+async function replyInGroup(groupId: string, socket: WASocket, text: string) {
+  await socket.sendMessage(groupId, { text })
+}
+
+async function reactInGroup(
+  groupId: string,
+  messageKey: IMessageKey,
+  socket: WASocket,
+  text: string,
+) {
+  await socket.sendMessage(groupId, {
+    react: {
+      text: text,
+      key: messageKey,
+    },
+  })
 }
