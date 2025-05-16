@@ -177,15 +177,18 @@ async function handleCommand(
     case '/join':
       if (!isUserInQueue(groupId, username)) {
         addUserToQueue(groupId, username)
-        await replyInGroup(groupId, socket, `${username} joined the queue`)
+        await replyInGroup(
+          groupId,
+          socket,
+          `${username} joined the queue:\n${formatQueue(groupId)}`,
+        )
       } else {
         await replyInGroup(
           groupId,
           socket,
-          `${username}, you're already in the queue`,
+          `${username}, you're already in the queue:\n${formatQueue(groupId)}`,
         )
       }
-      await sendQueue(groupId, socket)
       break
 
     case '/leave':
@@ -193,17 +196,21 @@ async function handleCommand(
         await replyInGroup(
           groupId,
           socket,
-          `${username}, you're not in the queue`,
+          `${username}, you're not in the queue:\n${formatQueue(groupId)}`,
         )
       } else {
         removeUserFromQueue(groupId, username)
-        await replyInGroup(groupId, socket, `${username} left the queue`)
+        await replyInGroup(
+          groupId,
+          socket,
+          `${username} left the queue:\n${formatQueue(groupId)}`,
+        )
       }
-      await sendQueue(groupId, socket)
       break
 
     case '/queue':
-      return sendQueue(groupId, socket)
+      await replyInGroup(groupId, socket, `Queue:\n${formatQueue(groupId)}`)
+      break
 
     default:
       return replyInGroup(
@@ -242,16 +249,16 @@ function removeUserFromQueue(groupId: string, username: string) {
 }
 
 function logQueue(groupId: string) {
-  Logger.info('Queue: ' + JSON.stringify(getGroupQueue(groupId)))
+  Logger.info(Color.Yellow, 'Queue: ' + JSON.stringify(getGroupQueue(groupId)))
 }
 
-async function sendQueue(groupId: string, client: WASocket) {
+function formatQueue(groupId: string) {
   logQueue(groupId)
-  const list =
+  return (
     getGroupQueue(groupId)
       .map((q, i) => `${i + 1}. ${q.id}`)
       .join('\n') || '—'
-  return replyInGroup(groupId, client, `Queue:\n${list}`)
+  )
 }
 
 async function replyInGroup(groupId: string, client: WASocket, text: string) {
