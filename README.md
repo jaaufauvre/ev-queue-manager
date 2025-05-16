@@ -35,7 +35,7 @@ Available commands:
 * `/help` – View the command menu
 * `/join` – Enter the queue
 * `/leave` – Exit the queue
-* `/queue` – See the current queue
+* `/queue` – Display the queue
 
 ## Development
 
