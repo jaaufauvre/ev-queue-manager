@@ -31,11 +31,9 @@ npm run start
 - After connecting, invite the bot to a WhatsApp group
 - Use the following commands in the WhatsApp group chat:
 
-Available commands:
-* `/help` – View the command menu
-* `/join` – Enter the queue
-* `/leave` – Exit the queue
-* `/queue` – Display the queue
+<p>
+ <img src="./res/capture.png" width="300px"/>
+</p>
 
 ## Development
 
