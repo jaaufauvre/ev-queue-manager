@@ -12,96 +12,114 @@ import {
 } from '@whiskeysockets/baileys'
 import IMessageKey = proto.IMessageKey
 
-interface QueueEntry {
-  userId: string
-  username: string
-  joined: number
-}
-
-let GROUP_QUEUES: Record<string, QueueEntry[]> = {}
-const PROCESSED_MESSAGES = new Set()
-
-// Main entrypoint
+// ---------------------------------------------------------------------------
+// ENTRY POINT
+// ---------------------------------------------------------------------------
 ;(async () => {
   Logger.setDebug(false)
   Logger.info(Color.Yellow, '🤖 Starting ...')
 
-  // Schedule daily queue reset at 6am Dublin Time
+  // Auto-reset at 6am Dublin Time
   cron.schedule(
     '0 6 * * *',
     () => {
       Logger.info(Color.Yellow, '🕓 Scheduled queue reset')
-      GROUP_QUEUES = {}
+      GROUP_QUEUES.clear()
       PROCESSED_MESSAGES.clear()
     },
     { timezone: 'Europe/Dublin' },
   )
 
+  // Forever loop
   let attempt = 0
-  const delay = 5000
   while (true) {
     attempt++
-    Logger.info(`Attempt ${attempt} at starting socket`)
     try {
+      Logger.info(`Attempt ${attempt} at connecting to WA ...`)
       await start()
-      Logger.info('Start returned, will retry ...')
     } catch (err) {
-      Logger.error(`Attempt ${attempt} failed:`, err)
+      Logger.error('Unexpected interruption: ' + err)
     }
-    Logger.info(`Waiting ${delay}ms before retrying ...`)
-    await new Promise((resolve) => setTimeout(resolve, delay))
+    Logger.info(`Waiting 5s before reconnecting ...`)
+    await new Promise((res) => setTimeout(res, 5000))
   }
 })()
 
+// ---------------------------------------------------------------------------
+// CONNECTION TO WA
+// ---------------------------------------------------------------------------
 async function start() {
-  try {
-    // Authentication info
-    const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
+  const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
 
-    // Fetch the exact WA Web version tuple that WhatsApp’s servers expect
-    const { version, isLatest, error } = await fetchLatestWaWebVersion({})
-    if (error) {
-      Logger.error(`Couldn't fetch the WA version`)
-      throw error
-    }
-    Logger.info(
-      `Using WA Web version ${version.join('.')}`,
-      isLatest ? '(up-to-date)' : '(not latest?)',
-    )
-
-    const socket = makeWASocket({
-      version,
-      browser: Browsers.macOS('Chrome'),
-      auth: state,
-      printQRInTerminal: true,
-    })
-
-    await new Promise((_, reject) => {
-      socket.ev.on('creds.update', saveCreds)
-      socket.ev.on('connection.update', ({ connection, lastDisconnect }) => {
-        if (connection === 'close') {
-          Logger.error(`Connection was closed`)
-          const error =
-            (lastDisconnect && lastDisconnect.error) ||
-            new Error('Connection closed')
-          reject(error)
-        }
-        if (connection === 'open') {
-          Logger.info('✅  Connected!')
-        }
-      })
-      socket.ev.on('messages.upsert', async (m) => {
-        await processUserMessage(m, socket)
-      })
-    })
-  } catch (err) {
-    // Log any startup errors and rethrow (to be caught by the retry loop)
-    Logger.error(err)
-    throw err
+  // Fetch the exact version WA servers expect
+  const { version, isLatest, error } = await fetchLatestWaWebVersion({})
+  if (error) {
+    Logger.error(`Couldn't fetch the WA version`)
+    throw error
   }
+  Logger.info(
+    `Using WA Web version ${version.join('.')}`,
+    isLatest ? '(up-to-date)' : '(not latest?)',
+  )
+
+  const socket = makeWASocket({
+    version: version,
+    browser: Browsers.macOS('Chrome'),
+    auth: state,
+    printQRInTerminal: true,
+  })
+
+  // Save credentials so we persist the session
+  socket.ev.on('creds.update', saveCreds)
+
+  // Critical section
+  return new Promise<void>((resolve, reject) => {
+    let finished = false
+    const finish = (err?: any): void => {
+      if (finished) return
+      finished = true
+      socket.ev.removeAllListeners('creds.update')
+      socket.ev.removeAllListeners('messages.upsert')
+      socket.ev.removeAllListeners('connection.update')
+      socket.ws?.removeAllListeners()
+      err ? reject(err) : resolve()
+    }
+
+    socket.ev.on('messages.upsert', async (m) => {
+      try {
+        await handleUserMessages(m, socket)
+      } catch (err) {
+        Logger.error('Error while handling messages')
+        finish(err)
+      }
+    })
+
+    socket.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+      if (connection === 'close') {
+        Logger.error('Connection closed: ', lastDisconnect?.error)
+        finish()
+      }
+      if (connection === 'open') {
+        Logger.info('✅  Connected!')
+      }
+    })
+
+    // Low-level WebSocket guards
+    socket.ws?.on('error', (err: unknown) => {
+      Logger.error('WebSocket error:', err)
+      finish(err)
+    })
+    socket.ws?.on('close', (code: number, reason: Buffer) => {
+      Logger.error(`WebSocket closed: ${code} ${reason.toString()}`)
+      finish()
+    })
+  })
 }
 
-async function processUserMessage(
+// ---------------------------------------------------------------------------
+// MESSAGE HANDLING
+// ---------------------------------------------------------------------------
+async function handleUserMessages(
   m: {
     messages: WAMessage[]
     type: MessageUpsertType
@@ -170,6 +188,9 @@ async function processUserMessage(
   }
 }
 
+// ---------------------------------------------------------------------------
+// COMMAND HANDLING
+// ---------------------------------------------------------------------------
 async function handleCommand(
   groupId: string,
   messageKey: IMessageKey,
@@ -254,26 +275,31 @@ async function handleCommand(
   }
 }
 
-function getGroupQueue(groupId: string) {
-  if (!GROUP_QUEUES[groupId]) {
-    GROUP_QUEUES[groupId] = []
-  }
-  return GROUP_QUEUES[groupId]
+// ---------------------------------------------------------------------------
+// QUEUE HELPERS
+// ---------------------------------------------------------------------------
+interface Customer {
+  userId: string
+  username: string
+}
+const GROUP_QUEUES = new Map<string, Customer[]>()
+function getGroupQueue(groupId: string): Customer[] {
+  GROUP_QUEUES.set(groupId, GROUP_QUEUES.get(groupId) ?? [])
+  return GROUP_QUEUES.get(groupId)!
 }
 
-function setGroupQueue(groupId: string, queue: QueueEntry[]) {
-  GROUP_QUEUES[groupId] = queue
+function setGroupQueue(groupId: string, queue: Customer[]) {
+  GROUP_QUEUES.set(groupId, queue)
 }
 
 function isUserInQueue(groupId: string, userId: string) {
-  return getGroupQueue(groupId).find((entry) => entry.userId === userId)
+  return getGroupQueue(groupId).find((customer) => customer.userId === userId)
 }
 
 function addUserToQueue(groupId: string, userId: string, username: string) {
   getGroupQueue(groupId).push({
     userId: userId,
     username: username,
-    joined: Date.now(),
   })
 }
 
@@ -281,30 +307,35 @@ function removeUserFromQueue(groupId: string, userId: string) {
   const queue = getGroupQueue(groupId)
   setGroupQueue(
     groupId,
-    queue.filter((entry) => entry.userId !== userId),
+    queue.filter((customer) => customer.userId !== userId),
   )
-}
-
-function userIdToMention(userId: string): string {
-  const numberPart = userId.split('@')[0]
-  return `@${numberPart}`
 }
 
 function logQueue(groupId: string) {
   Logger.info(Color.Yellow, 'Queue: ' + JSON.stringify(getGroupQueue(groupId)))
 }
 
+// ---------------------------------------------------------------------------
+// WA MESSAGE HELPERS
+// ---------------------------------------------------------------------------
+const PROCESSED_MESSAGES = new Set()
+
+function userIdToMention(userId: string): string {
+  const numberPart = userId.split('@')[0]
+  return `@${numberPart}`
+}
+
 function formatQueueWithMentions(groupId: string) {
   logQueue(groupId)
   return (
     getGroupQueue(groupId)
-      .map((entry, i) => `${i + 1}. ${userIdToMention(entry.userId)}`)
+      .map((customer, i) => `${i + 1}. ${userIdToMention(customer.userId)}`)
       .join('\n') || '—'
   )
 }
 
 function getQueueMentions(groupId: string): string[] {
-  return getGroupQueue(groupId).map((entry) => entry.userId)
+  return getGroupQueue(groupId).map((customer) => customer.userId)
 }
 
 async function replyInGroup(
@@ -333,3 +364,13 @@ async function reactInGroup(
     },
   })
 }
+
+// ---------------------------------------------------------------------------
+// GLOBAL SAFETY NET
+// ---------------------------------------------------------------------------
+process.on('unhandledRejection', (reason) => {
+  Logger.error('Unhandled rejection: ', reason)
+})
+process.on('uncaughtException', (error) => {
+  Logger.error('Uncaught exception:   ', error)
+})
