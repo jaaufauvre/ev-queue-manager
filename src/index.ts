@@ -82,7 +82,11 @@ async function start() {
       socket.ev.removeAllListeners('messages.upsert')
       socket.ev.removeAllListeners('connection.update')
       socket.ws?.removeAllListeners()
-      err ? reject(err) : resolve()
+      if (err) {
+        reject(err)
+      } else {
+        resolve()
+      }
     }
 
     socket.ev.on('messages.upsert', async (m) => {
@@ -269,7 +273,7 @@ async function handleCommand(
       await replyInGroup(
         groupId,
         socket,
-        `Unknown command. Type \`/help\` for the list of commands.`,
+        `Unknown command. Send \`/help\` for the list of commands.`,
       )
       await reactInGroup(groupId, messageKey, socket, '❌')
   }
