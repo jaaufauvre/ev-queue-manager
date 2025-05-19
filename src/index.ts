@@ -212,7 +212,7 @@ async function handleCommand(
         msg,
         socket,
         `Available commands:
-* \`/help\` (\`/h\`) – View the command menu
+* \`/help\` (\`/h\`) – View this menu
 * \`/join\` (\`/j\`) – Enter the queue
 * \`/leave\` (\`/l\`) – Exit the queue
 * \`/queue\` (\`/q\`) – Display the queue`,
