@@ -205,19 +205,21 @@ async function handleCommand(
 ) {
   switch (command.toLowerCase().trim()) {
     case '/help':
+    case '/h':
       await replyInGroup(
         groupId,
         socket,
         `Available commands:
-* \`/help\` – View the command menu
-* \`/join\` – Enter the queue
-* \`/leave\` – Exit the queue
-* \`/queue\` – Display the queue`,
+* \`/help\` (\`/h\`) – View the command menu
+* \`/join\` (\`/j\`) – Enter the queue
+* \`/leave\` (\`/l\`) – Exit the queue
+* \`/queue\` (\`/q\`) – Display the queue`,
       )
       await reactInGroup(groupId, messageKey, socket, '🆘')
       break
 
     case '/join':
+    case '/j':
       if (!isUserInQueue(groupId, userId)) {
         addUserToQueue(groupId, userId, username)
         await replyInGroup(
@@ -239,6 +241,7 @@ async function handleCommand(
       break
 
     case '/leave':
+    case '/l':
       if (!isUserInQueue(groupId, userId)) {
         await replyInGroup(
           groupId,
@@ -260,6 +263,7 @@ async function handleCommand(
       break
 
     case '/queue':
+    case '/q':
       await replyInGroup(
         groupId,
         socket,
