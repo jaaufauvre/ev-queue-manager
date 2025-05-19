@@ -144,8 +144,8 @@ async function handleUserMessages(
       Logger.debug('No message, ignoring')
       return
     }
-    const messageKey = msg.key
-    if (!messageKey) {
+    const msgKey = msg.key
+    if (!msgKey) {
       Logger.debug('No key for message, ignoring')
       return
     }
@@ -178,7 +178,7 @@ async function handleUserMessages(
       Logger.debug('Not a command, ignoring')
       return
     }
-    const uniqueId = `${groupId}|${messageKey.id}`
+    const uniqueId = `${groupId}|${msgKey.id}`
     if (PROCESSED_MESSAGES.has(uniqueId)) {
       Logger.debug('Message ID already processed, ignoring')
       return
@@ -188,7 +188,7 @@ async function handleUserMessages(
     Logger.info(Color.Green, `Username: ${username}`)
     Logger.info(Color.Green, `User ID: ${userId}`)
     Logger.info(Color.Green, `Group ID: ${groupId}`)
-    await handleCommand(groupId, messageKey, socket, text, userId, username)
+    await handleCommand(groupId, msgKey, msg, socket, text, userId, username)
   }
 }
 
@@ -197,7 +197,8 @@ async function handleUserMessages(
 // ---------------------------------------------------------------------------
 async function handleCommand(
   groupId: string,
-  messageKey: IMessageKey,
+  msgKey: IMessageKey,
+  msg: WAMessage,
   socket: WASocket,
   command: string,
   userId: string,
@@ -208,6 +209,7 @@ async function handleCommand(
     case '/h':
       await replyInGroup(
         groupId,
+        msg,
         socket,
         `Available commands:
 * \`/help\` (\`/h\`) – View the command menu
@@ -215,7 +217,7 @@ async function handleCommand(
 * \`/leave\` (\`/l\`) – Exit the queue
 * \`/queue\` (\`/q\`) – Display the queue`,
       )
-      await reactInGroup(groupId, messageKey, socket, '🆘')
+      await reactInGroup(groupId, msgKey, socket, '🆘')
       break
 
     case '/join':
@@ -224,19 +226,21 @@ async function handleCommand(
         addUserToQueue(groupId, userId, username)
         await replyInGroup(
           groupId,
+          msg,
           socket,
           `${username} joined the queue:\n${formatQueueWithMentions(groupId)}`,
           getQueueMentions(groupId),
         )
-        await reactInGroup(groupId, messageKey, socket, '👍')
+        await reactInGroup(groupId, msgKey, socket, '👍')
       } else {
         await replyInGroup(
           groupId,
+          msg,
           socket,
           `${username}, you're already in the queue:\n${formatQueueWithMentions(groupId)}`,
           getQueueMentions(groupId),
         )
-        await reactInGroup(groupId, messageKey, socket, '❌')
+        await reactInGroup(groupId, msgKey, socket, '❌')
       }
       break
 
@@ -245,20 +249,22 @@ async function handleCommand(
       if (!isUserInQueue(groupId, userId)) {
         await replyInGroup(
           groupId,
+          msg,
           socket,
           `${username}, you're not in the queue:\n${formatQueueWithMentions(groupId)}`,
           getQueueMentions(groupId),
         )
-        await reactInGroup(groupId, messageKey, socket, '❌')
+        await reactInGroup(groupId, msgKey, socket, '❌')
       } else {
         removeUserFromQueue(groupId, userId)
         await replyInGroup(
           groupId,
+          msg,
           socket,
           `${username} left the queue:\n${formatQueueWithMentions(groupId)}`,
           getQueueMentions(groupId),
         )
-        await reactInGroup(groupId, messageKey, socket, '👋')
+        await reactInGroup(groupId, msgKey, socket, '👋')
       }
       break
 
@@ -266,20 +272,22 @@ async function handleCommand(
     case '/q':
       await replyInGroup(
         groupId,
+        msg,
         socket,
         `Queue:\n${formatQueueWithMentions(groupId)}`,
         getQueueMentions(groupId),
       )
-      await reactInGroup(groupId, messageKey, socket, '👀')
+      await reactInGroup(groupId, msgKey, socket, '👀')
       break
 
     default:
       await replyInGroup(
         groupId,
+        msg,
         socket,
         `Unknown command. Send \`/help\` for the list of commands.`,
       )
-      await reactInGroup(groupId, messageKey, socket, '❌')
+      await reactInGroup(groupId, msgKey, socket, '❌')
   }
 }
 
@@ -348,6 +356,7 @@ function getQueueMentions(groupId: string): string[] {
 
 async function replyInGroup(
   groupId: string,
+  msg: WAMessage,
   socket: WASocket,
   text: string,
   mentions: string[] = [],
@@ -355,20 +364,23 @@ async function replyInGroup(
   await socket.sendMessage(
     groupId,
     { text: text, mentions: mentions },
-    { ephemeralExpiration: 86400 }, // 24 hours
+    {
+      quoted: msg, // Message we are replying to
+      ephemeralExpiration: 86400, // 24 hours
+    },
   )
 }
 
 async function reactInGroup(
   groupId: string,
-  messageKey: IMessageKey,
+  msgKey: IMessageKey,
   socket: WASocket,
   text: string,
 ) {
   await socket.sendMessage(groupId, {
     react: {
       text: text,
-      key: messageKey,
+      key: msgKey,
     },
   })
 }
