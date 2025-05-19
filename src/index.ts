@@ -228,7 +228,7 @@ async function handleCommand(
           groupId,
           msg,
           socket,
-          `${username} joined the queue:\n${formatQueueWithMentions(groupId)}`,
+          `${username}, you joined the queue:\n${formatQueueWithMentions(groupId)}`,
           getQueueMentions(groupId),
         )
         await reactInGroup(groupId, msgKey, socket, '👍')
@@ -261,7 +261,7 @@ async function handleCommand(
           groupId,
           msg,
           socket,
-          `${username} left the queue:\n${formatQueueWithMentions(groupId)}`,
+          `${username}, you left the queue:\n${formatQueueWithMentions(groupId)}`,
           getQueueMentions(groupId),
         )
         await reactInGroup(groupId, msgKey, socket, '👋')
