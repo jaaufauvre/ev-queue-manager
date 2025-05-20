@@ -11,6 +11,8 @@ import {
   proto,
 } from '@whiskeysockets/baileys'
 import IMessageKey = proto.IMessageKey
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
 
 // ---------------------------------------------------------------------------
 // ENTRY POINT
@@ -18,12 +20,14 @@ import IMessageKey = proto.IMessageKey
 ;(async () => {
   Logger.setDebug(false)
   Logger.info(Color.Yellow, '🤖 Starting ...')
+  await readQueueFile()
 
   // Auto-reset at 6am Dublin Time
   cron.schedule(
     '0 6 * * *',
-    () => {
+    async () => {
       Logger.info(Color.Yellow, '🕓 Scheduled queue reset')
+      await deleteQueueFile()
       GROUP_QUEUES.clear()
       PROCESSED_MESSAGES.clear()
     },
@@ -232,6 +236,7 @@ async function handleCommand(
           getQueueMentions(groupId),
         )
         await reactInGroup(groupId, msgKey, socket, '👍')
+        await writeQueueFile()
       } else {
         await replyInGroup(
           groupId,
@@ -265,6 +270,7 @@ async function handleCommand(
           getQueueMentions(groupId),
         )
         await reactInGroup(groupId, msgKey, socket, '👋')
+        await writeQueueFile()
       }
       break
 
@@ -329,6 +335,49 @@ function removeUserFromQueue(groupId: string, userId: string) {
 
 function logQueue(groupId: string) {
   Logger.info(Color.Yellow, 'Queue: ' + JSON.stringify(getGroupQueue(groupId)))
+}
+
+// ---------------------------------------------------------------------------
+// QUEUE FILE HELPERS
+// ---------------------------------------------------------------------------
+function getQueueFilepath() {
+  return path.resolve(process.cwd(), 'queues.json')
+}
+
+async function writeQueueFile() {
+  try {
+    Logger.info(Color.LightBlue, 'Writing queue file')
+    await fs.writeFile(
+      getQueueFilepath(),
+      JSON.stringify(Array.from(GROUP_QUEUES.entries()), null, 2),
+      'utf-8',
+    )
+  } catch (err) {
+    Logger.warn("Couldn't write queue file: " + err)
+  }
+}
+
+async function readQueueFile() {
+  try {
+    Logger.info(Color.LightBlue, 'Reading queue file')
+    const rawJson = await fs.readFile(getQueueFilepath(), 'utf-8')
+    const tuples = JSON.parse(rawJson) as [string, Customer[]][]
+    GROUP_QUEUES.clear()
+    for (const [groupId, customers] of tuples) {
+      setGroupQueue(groupId, customers)
+    }
+  } catch (err) {
+    Logger.warn("Couldn't read queue file: " + err)
+  }
+}
+
+async function deleteQueueFile() {
+  try {
+    Logger.info(Color.LightBlue, 'Deleting queue file')
+    await fs.unlink(getQueueFilepath())
+  } catch (err) {
+    Logger.warn("Couldn't delete queue file: " + err)
+  }
 }
 
 // ---------------------------------------------------------------------------
