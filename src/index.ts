@@ -10,9 +10,10 @@ import {
   MessageUpsertType,
   proto,
 } from '@whiskeysockets/baileys'
-import IMessageKey = proto.IMessageKey
+type IMessageKey = proto.IMessageKey
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import qrcode from 'qrcode-terminal'
 
 // ---------------------------------------------------------------------------
 // ENTRY POINT
@@ -70,7 +71,6 @@ async function start() {
     version: version,
     browser: Browsers.macOS('Chrome'),
     auth: state,
-    printQRInTerminal: true,
   })
 
   // Save credentials so we persist the session
@@ -102,7 +102,11 @@ async function start() {
       }
     })
 
-    socket.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+    socket.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+      if (qr) {
+        qrcode.generate(qr, { small: true })
+        Logger.info(Color.Yellow, 'Scan the QR in WhatsApp → Linked devices')
+      }
       if (connection === 'close') {
         Logger.error('Connection closed: ', lastDisconnect?.error)
         finish()
@@ -135,43 +139,44 @@ async function handleUserMessages(
   },
   socket: WASocket,
 ) {
-  if (!m.messages || m.messages.length == 0) {
+  if (!m.messages || m.messages.length === 0) {
     Logger.debug('No messages, ignoring')
-    return
-  }
-  if (m.type != 'notify') {
-    Logger.debug('Not new messages, ignoring')
     return
   }
   for (const msg of m.messages) {
     if (!msg.message) {
       Logger.debug('No message, ignoring')
-      return
+      continue
     }
     const msgKey = msg.key
     if (!msgKey) {
       Logger.debug('No key for message, ignoring')
-      return
+      continue
     }
-    const groupId = msg.key.remoteJid
-    if (!groupId) {
+    const messageId = msgKey.id
+    if (!messageId) {
+      Logger.debug('No ID for message, ignoring')
+      continue
+    }
+    const groupId = msgKey.remoteJid
+    if (!groupId || !groupId.endsWith('@g.us')) {
       Logger.debug('Not from a group, ignoring')
-      return
+      continue
     }
     Logger.debug('Message: ' + JSON.stringify(msg))
-    if (msg.key.fromMe) {
+    if (msgKey.fromMe) {
       Logger.debug('Own message, ignoring')
-      return
+      continue
     }
     const username = msg.pushName
     if (!username || username.length === 0) {
       Logger.debug('No user name, ignoring')
-      return
+      continue
     }
-    const userId = msg.key.participant
+    const userId = msgKey.participant
     if (!userId || userId.length === 0) {
       Logger.debug('No user ID, ignoring')
-      return
+      continue
     }
     const text =
       msg.message.conversation ||
@@ -180,18 +185,18 @@ async function handleUserMessages(
       msg.message.ephemeralMessage?.message?.extendedTextMessage?.text
     if (!text?.startsWith('/')) {
       Logger.debug('Not a command, ignoring')
-      return
+      continue
     }
-    const uniqueId = `${groupId}|${msgKey.id}`
+    const uniqueId = `${groupId}|${messageId}`
     if (PROCESSED_MESSAGES.has(uniqueId)) {
       Logger.debug('Message ID already processed, ignoring')
-      return
+      continue
     }
-    PROCESSED_MESSAGES.add(uniqueId)
     Logger.info(Color.Green, `Command: ${text}`)
     Logger.info(Color.Green, `Username: ${username}`)
     Logger.info(Color.Green, `User ID: ${userId}`)
     Logger.info(Color.Green, `Group ID: ${groupId}`)
+    PROCESSED_MESSAGES.add(uniqueId)
     await handleCommand(groupId, msgKey, msg, socket, text, userId, username)
   }
 }
@@ -216,10 +221,10 @@ async function handleCommand(
         msg,
         socket,
         `Available commands:
-* \`/help\` (\`/h\`) – View this menu
-* \`/join\` (\`/j\`) – Enter the queue
-* \`/leave\` (\`/l\`) – Exit the queue
-* \`/queue\` (\`/q\`) – Display the queue`,
+* \`/help\` (\`/h\`) → Display this menu
+* \`/join\` (\`/j\`) → Join the queue
+* \`/leave\` (\`/l\`) → Leave the queue
+* \`/check\` (\`/c\`) → check the queue`,
       )
       await reactInGroup(groupId, msgKey, socket, '🆘')
       break
@@ -274,8 +279,8 @@ async function handleCommand(
       }
       break
 
-    case '/queue':
-    case '/q':
+    case '/check':
+    case '/c':
       await replyInGroup(
         groupId,
         msg,
@@ -310,22 +315,26 @@ function getGroupQueue(groupId: string): Customer[] {
   return GROUP_QUEUES.get(groupId)!
 }
 
-function setGroupQueue(groupId: string, queue: Customer[]) {
+function setGroupQueue(groupId: string, queue: Customer[]): void {
   GROUP_QUEUES.set(groupId, queue)
 }
 
-function isUserInQueue(groupId: string, userId: string) {
-  return getGroupQueue(groupId).find((customer) => customer.userId === userId)
+function isUserInQueue(groupId: string, userId: string): boolean {
+  return getGroupQueue(groupId).some((customer) => customer.userId === userId)
 }
 
-function addUserToQueue(groupId: string, userId: string, username: string) {
+function addUserToQueue(
+  groupId: string,
+  userId: string,
+  username: string,
+): void {
   getGroupQueue(groupId).push({
     userId: userId,
     username: username,
   })
 }
 
-function removeUserFromQueue(groupId: string, userId: string) {
+function removeUserFromQueue(groupId: string, userId: string): void {
   const queue = getGroupQueue(groupId)
   setGroupQueue(
     groupId,
@@ -333,18 +342,18 @@ function removeUserFromQueue(groupId: string, userId: string) {
   )
 }
 
-function logQueue(groupId: string) {
+function logQueue(groupId: string): void {
   Logger.info(Color.Yellow, 'Queue: ' + JSON.stringify(getGroupQueue(groupId)))
 }
 
 // ---------------------------------------------------------------------------
 // QUEUE FILE HELPERS
 // ---------------------------------------------------------------------------
-function getQueueFilepath() {
+function getQueueFilepath(): string {
   return path.resolve(process.cwd(), 'queues.json')
 }
 
-async function writeQueueFile() {
+async function writeQueueFile(): Promise<void> {
   try {
     Logger.info(Color.LightBlue, 'Writing queue file')
     await fs.writeFile(
@@ -357,7 +366,7 @@ async function writeQueueFile() {
   }
 }
 
-async function readQueueFile() {
+async function readQueueFile(): Promise<void> {
   try {
     Logger.info(Color.LightBlue, 'Reading queue file')
     const rawJson = await fs.readFile(getQueueFilepath(), 'utf-8')
@@ -371,7 +380,7 @@ async function readQueueFile() {
   }
 }
 
-async function deleteQueueFile() {
+async function deleteQueueFile(): Promise<void> {
   try {
     Logger.info(Color.LightBlue, 'Deleting queue file')
     await fs.unlink(getQueueFilepath())
@@ -390,7 +399,7 @@ function userIdToMention(userId: string): string {
   return `@${numberPart}`
 }
 
-function formatQueueWithMentions(groupId: string) {
+function formatQueueWithMentions(groupId: string): string {
   logQueue(groupId)
   return (
     getGroupQueue(groupId)
@@ -409,7 +418,7 @@ async function replyInGroup(
   socket: WASocket,
   text: string,
   mentions: string[] = [],
-) {
+): Promise<void> {
   await socket.sendMessage(
     groupId,
     { text: text, mentions: mentions },
@@ -425,7 +434,7 @@ async function reactInGroup(
   msgKey: IMessageKey,
   socket: WASocket,
   text: string,
-) {
+): Promise<void> {
   await socket.sendMessage(groupId, {
     react: {
       text: text,
