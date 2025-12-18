@@ -224,7 +224,7 @@ async function handleCommand(
 * \`/help\` (\`/h\`) → Display this menu
 * \`/join\` (\`/j\`) → Join the queue
 * \`/leave\` (\`/l\`) → Leave the queue
-* \`/check\` (\`/c\`) → check the queue`,
+* \`/check\` (\`/c\`) → Check the queue`,
       )
       await reactInGroup(groupId, msgKey, socket, '🆘')
       break
