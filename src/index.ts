@@ -16,8 +16,13 @@ import path from 'node:path'
 import qrcode from 'qrcode-terminal'
 
 // ---------------------------------------------------------------------------
-// ENTRY POINT
+// GLOBAL SOCKET INSTANCE
 // ---------------------------------------------------------------------------
+let socket: WASocket
+
+  // ---------------------------------------------------------------------------
+  // ENTRY POINT
+  // ---------------------------------------------------------------------------
 ;(async () => {
   Logger.setDebug(false)
   Logger.info(Color.Yellow, '🤖 Starting ...')
@@ -31,6 +36,13 @@ import qrcode from 'qrcode-terminal'
       await deleteQueueFile()
       GROUP_QUEUES.clear()
       PROCESSED_MESSAGES.clear()
+      const groups = await socket.groupFetchAllParticipating()
+      for (const groupId of Object.keys(groups)) {
+        await postInGroup(
+          groupId,
+          'The queue was cleared. Send `/join` to join the queue, `/help` for all commands.',
+        )
+      }
     },
     { timezone: 'Europe/Dublin' },
   )
@@ -67,7 +79,7 @@ async function start() {
     isLatest ? '(up-to-date)' : '(not latest?)',
   )
 
-  const socket = makeWASocket({
+  socket = makeWASocket({
     version: version,
     browser: Browsers.macOS('Chrome'),
     auth: state,
@@ -95,7 +107,7 @@ async function start() {
 
     socket.ev.on('messages.upsert', async (m) => {
       try {
-        await handleUserMessages(m, socket)
+        await handleUserMessages(m)
       } catch (err) {
         Logger.error('Error while handling messages')
         finish(err)
@@ -112,7 +124,7 @@ async function start() {
         finish()
       }
       if (connection === 'open') {
-        Logger.info('✅  Connected!')
+        Logger.info('✅ Connected!')
       }
     })
 
@@ -131,14 +143,11 @@ async function start() {
 // ---------------------------------------------------------------------------
 // MESSAGE HANDLING
 // ---------------------------------------------------------------------------
-async function handleUserMessages(
-  m: {
-    messages: WAMessage[]
-    type: MessageUpsertType
-    requestId?: string
-  },
-  socket: WASocket,
-) {
+async function handleUserMessages(m: {
+  messages: WAMessage[]
+  type: MessageUpsertType
+  requestId?: string
+}) {
   if (!m.messages || m.messages.length === 0) {
     Logger.debug('No messages, ignoring')
     return
@@ -197,7 +206,7 @@ async function handleUserMessages(
     Logger.info(Color.Green, `User ID: ${userId}`)
     Logger.info(Color.Green, `Group ID: ${groupId}`)
     PROCESSED_MESSAGES.add(uniqueId)
-    await handleCommand(groupId, msgKey, msg, socket, text, userId, username)
+    await handleCommand(groupId, msgKey, msg, text, userId, username)
   }
 }
 
@@ -208,7 +217,6 @@ async function handleCommand(
   groupId: string,
   msgKey: IMessageKey,
   msg: WAMessage,
-  socket: WASocket,
   command: string,
   userId: string,
   username: string,
@@ -219,14 +227,13 @@ async function handleCommand(
       await replyInGroup(
         groupId,
         msg,
-        socket,
         `Available commands:
 * \`/help\` (\`/h\`) → Display this menu
 * \`/join\` (\`/j\`) → Join the queue
 * \`/leave\` (\`/l\`) → Leave the queue
 * \`/check\` (\`/c\`) → Check the queue`,
       )
-      await reactInGroup(groupId, msgKey, socket, '🆘')
+      await reactInGroup(groupId, msgKey, '🆘')
       break
 
     case '/join':
@@ -236,21 +243,19 @@ async function handleCommand(
         await replyInGroup(
           groupId,
           msg,
-          socket,
           `${username}, you joined the queue:\n${formatQueueWithMentions(groupId)}`,
           getQueueMentions(groupId),
         )
-        await reactInGroup(groupId, msgKey, socket, '👍')
+        await reactInGroup(groupId, msgKey, '👍')
         await writeQueueFile()
       } else {
         await replyInGroup(
           groupId,
           msg,
-          socket,
           `${username}, you're already in the queue:\n${formatQueueWithMentions(groupId)}`,
           getQueueMentions(groupId),
         )
-        await reactInGroup(groupId, msgKey, socket, '❌')
+        await reactInGroup(groupId, msgKey, '❌')
       }
       break
 
@@ -260,21 +265,19 @@ async function handleCommand(
         await replyInGroup(
           groupId,
           msg,
-          socket,
           `${username}, you're not in the queue:\n${formatQueueWithMentions(groupId)}`,
           getQueueMentions(groupId),
         )
-        await reactInGroup(groupId, msgKey, socket, '❌')
+        await reactInGroup(groupId, msgKey, '❌')
       } else {
         removeUserFromQueue(groupId, userId)
         await replyInGroup(
           groupId,
           msg,
-          socket,
           `${username}, you left the queue:\n${formatQueueWithMentions(groupId)}`,
           getQueueMentions(groupId),
         )
-        await reactInGroup(groupId, msgKey, socket, '👋')
+        await reactInGroup(groupId, msgKey, '👋')
         await writeQueueFile()
       }
       break
@@ -284,21 +287,19 @@ async function handleCommand(
       await replyInGroup(
         groupId,
         msg,
-        socket,
         `Queue:\n${formatQueueWithMentions(groupId)}`,
         getQueueMentions(groupId),
       )
-      await reactInGroup(groupId, msgKey, socket, '👀')
+      await reactInGroup(groupId, msgKey, '👀')
       break
 
     default:
       await replyInGroup(
         groupId,
         msg,
-        socket,
-        `Unknown command. Send \`/help\` for the list of commands.`,
+        'Unknown command. Send `/help` for the list of commands.',
       )
-      await reactInGroup(groupId, msgKey, socket, '❌')
+      await reactInGroup(groupId, msgKey, '❌')
   }
 }
 
@@ -392,7 +393,7 @@ async function deleteQueueFile(): Promise<void> {
 // ---------------------------------------------------------------------------
 // WA MESSAGE HELPERS
 // ---------------------------------------------------------------------------
-const PROCESSED_MESSAGES = new Set()
+const PROCESSED_MESSAGES = new Set<string>()
 
 function userIdToMention(userId: string): string {
   const numberPart = userId.split('@')[0]
@@ -415,7 +416,6 @@ function getQueueMentions(groupId: string): string[] {
 async function replyInGroup(
   groupId: string,
   msg: WAMessage,
-  socket: WASocket,
   text: string,
   mentions: string[] = [],
 ): Promise<void> {
@@ -429,10 +429,19 @@ async function replyInGroup(
   )
 }
 
+async function postInGroup(groupId: string, text: string): Promise<void> {
+  await socket.sendMessage(
+    groupId,
+    { text: text },
+    {
+      ephemeralExpiration: 86400, // 24 hours
+    },
+  )
+}
+
 async function reactInGroup(
   groupId: string,
   msgKey: IMessageKey,
-  socket: WASocket,
   text: string,
 ): Promise<void> {
   await socket.sendMessage(groupId, {
@@ -450,5 +459,5 @@ process.on('unhandledRejection', (reason) => {
   Logger.error('Unhandled rejection: ', reason)
 })
 process.on('uncaughtException', (error) => {
-  Logger.error('Uncaught exception:   ', error)
+  Logger.error('Uncaught exception: ', error)
 })
