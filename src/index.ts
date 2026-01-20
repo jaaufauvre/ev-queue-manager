@@ -178,15 +178,20 @@ async function handleUserMessages(m: {
       continue
     }
     const username = msg.pushName
-    if (!username || username.length === 0) {
+    if (isEmpty(username)) {
       Logger.debug('No user name, ignoring')
       continue
     }
-    const userId = msgKey.participant
-    if (!userId || userId.length === 0) {
+    const userIds = new Set<string>(
+      [msgKey.participant, msgKey.participantAlt].filter(
+        (id): id is string => !isEmpty(id),
+      ),
+    )
+    if (userIds.size === 0) {
       Logger.debug('No user ID, ignoring')
       continue
     }
+
     const text =
       msg.message.conversation ||
       msg.message.extendedTextMessage?.text ||
@@ -203,10 +208,10 @@ async function handleUserMessages(m: {
     }
     Logger.info(Color.Green, `Command: ${text}`)
     Logger.info(Color.Green, `Username: ${username}`)
-    Logger.info(Color.Green, `User ID: ${userId}`)
+    Logger.info(Color.Green, `User IDs: ${userIds}`)
     Logger.info(Color.Green, `Group ID: ${groupId}`)
     PROCESSED_MESSAGES.add(uniqueId)
-    await handleCommand(groupId, msgKey, msg, text, userId, username)
+    await handleCommand(groupId, msgKey, msg, text, userIds, username!)
   }
 }
 
@@ -218,7 +223,7 @@ async function handleCommand(
   msgKey: IMessageKey,
   msg: WAMessage,
   command: string,
-  userId: string,
+  userIds: Set<string>,
   username: string,
 ) {
   switch (command.toLowerCase().trim()) {
@@ -238,8 +243,8 @@ async function handleCommand(
 
     case '/join':
     case '/j':
-      if (!isUserInQueue(groupId, userId)) {
-        addUserToQueue(groupId, userId, username)
+      if (!isUserInQueue(groupId, userIds)) {
+        addUserToQueue(groupId, userIds, username)
         await replyInGroup(
           groupId,
           msg,
@@ -261,7 +266,7 @@ async function handleCommand(
 
     case '/leave':
     case '/l':
-      if (!isUserInQueue(groupId, userId)) {
+      if (!isUserInQueue(groupId, userIds)) {
         await replyInGroup(
           groupId,
           msg,
@@ -270,7 +275,7 @@ async function handleCommand(
         )
         await reactInGroup(groupId, msgKey, '❌')
       } else {
-        removeUserFromQueue(groupId, userId)
+        removeUserFromQueue(groupId, userIds)
         await replyInGroup(
           groupId,
           msg,
@@ -307,7 +312,7 @@ async function handleCommand(
 // QUEUE HELPERS
 // ---------------------------------------------------------------------------
 interface Customer {
-  userId: string
+  userIds: Set<string>
   username: string
 }
 const GROUP_QUEUES = new Map<string, Customer[]>()
@@ -320,26 +325,28 @@ function setGroupQueue(groupId: string, queue: Customer[]): void {
   GROUP_QUEUES.set(groupId, queue)
 }
 
-function isUserInQueue(groupId: string, userId: string): boolean {
-  return getGroupQueue(groupId).some((customer) => customer.userId === userId)
+function isUserInQueue(groupId: string, userIds: Set<string>): boolean {
+  return getGroupQueue(groupId).some((customer) =>
+    intersects(customer.userIds, userIds),
+  )
 }
 
 function addUserToQueue(
   groupId: string,
-  userId: string,
+  userIds: Set<string>,
   username: string,
 ): void {
   getGroupQueue(groupId).push({
-    userId: userId,
+    userIds: userIds,
     username: username,
   })
 }
 
-function removeUserFromQueue(groupId: string, userId: string): void {
+function removeUserFromQueue(groupId: string, userIds: Set<string>): void {
   const queue = getGroupQueue(groupId)
   setGroupQueue(
     groupId,
-    queue.filter((customer) => customer.userId !== userId),
+    queue.filter((customer) => !intersects(customer.userIds, userIds)),
   )
 }
 
@@ -404,13 +411,18 @@ function formatQueueWithMentions(groupId: string): string {
   logQueue(groupId)
   return (
     getGroupQueue(groupId)
-      .map((customer, i) => `${i + 1}. ${userIdToMention(customer.userId)}`)
+      .map(
+        (customer, i) =>
+          `${i + 1}. ${userIdToMention(Array.from(customer.userIds)[0])}`,
+      )
       .join('\n') || '—'
   )
 }
 
 function getQueueMentions(groupId: string): string[] {
-  return getGroupQueue(groupId).map((customer) => customer.userId)
+  return getGroupQueue(groupId).map(
+    (customer) => Array.from(customer.userIds)[0],
+  )
 }
 
 async function replyInGroup(
@@ -451,6 +463,16 @@ async function reactInGroup(
     },
   })
 }
+
+// ---------------------------------------------------------------------------
+// UTILS
+// ---------------------------------------------------------------------------
+function isEmpty(value: string | null | undefined): boolean {
+  return !value || value.trim().length === 0
+}
+
+export const intersects = (a: Set<string>, b: Set<string>): boolean =>
+  [...a].some((v) => b.has(v))
 
 // ---------------------------------------------------------------------------
 // GLOBAL SAFETY NET
