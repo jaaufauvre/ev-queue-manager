@@ -364,27 +364,43 @@ function getQueueFilepath(): string {
 async function writeQueueFile(): Promise<void> {
   try {
     Logger.info(Color.LightBlue, 'Writing queue file')
+    const queues = [...GROUP_QUEUES].map(([groupId, customers]) => [
+      groupId,
+      customers.map(({ userIds, username }) => ({
+        userIds: [...userIds],
+        username,
+      })),
+    ])
     await fs.writeFile(
       getQueueFilepath(),
-      JSON.stringify(Array.from(GROUP_QUEUES.entries()), null, 2),
+      JSON.stringify(queues, null, 2),
       'utf-8',
     )
   } catch (err) {
-    Logger.warn("Couldn't write queue file: " + err)
+    Logger.warn(`Couldn't write queue file: ${err}`)
   }
 }
 
 async function readQueueFile(): Promise<void> {
   try {
     Logger.info(Color.LightBlue, 'Reading queue file')
-    const rawJson = await fs.readFile(getQueueFilepath(), 'utf-8')
-    const tuples = JSON.parse(rawJson) as [string, Customer[]][]
+    const queueJson = await fs.readFile(getQueueFilepath(), 'utf-8')
+    const queues = JSON.parse(queueJson) as [
+      string,
+      { userIds: string[]; username: string }[],
+    ][]
     GROUP_QUEUES.clear()
-    for (const [groupId, customers] of tuples) {
-      setGroupQueue(groupId, customers)
+    for (const [groupId, customers] of queues) {
+      setGroupQueue(
+        groupId,
+        customers.map((c) => ({
+          userIds: new Set(c.userIds),
+          username: c.username,
+        })),
+      )
     }
   } catch (err) {
-    Logger.warn("Couldn't read queue file: " + err)
+    Logger.warn(`Couldn't read queue file: ${err}`)
   }
 }
 
