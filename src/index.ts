@@ -208,7 +208,7 @@ async function handleUserMessages(m: {
     }
     Logger.info(Color.Green, `Command: ${text}`)
     Logger.info(Color.Green, `Username: ${username}`)
-    Logger.info(Color.Green, `User IDs: ${userIds}`)
+    Logger.info(Color.Green, `User IDs: ${[...userIds].join(', ')}`)
     Logger.info(Color.Green, `Group ID: ${groupId}`)
     PROCESSED_MESSAGES.add(uniqueId)
     await handleCommand(groupId, msgKey, msg, text, userIds, username!)
@@ -432,7 +432,17 @@ function makeUserAvailable(
 }
 
 function logQueue(groupId: string): void {
-  Logger.info(Color.Yellow, 'Queue: ' + JSON.stringify(getGroupQueue(groupId)))
+  Logger.info(
+    Color.Yellow,
+    'Queue: ' +
+      JSON.stringify(
+        getGroupQueue(groupId).map((customer) => ({
+          userIds: [...customer.userIds],
+          username: customer.username,
+          available: customer.available,
+        })),
+      ),
+  )
 }
 
 // ---------------------------------------------------------------------------
