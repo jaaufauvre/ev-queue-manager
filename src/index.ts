@@ -233,10 +233,9 @@ async function handleCommand(
         groupId,
         msg,
         `Available commands:
-* \`/help\` (\`/h\`) → Display this menu
-* \`/join\` (\`/j\`) → Join the queue
-* \`/leave\` (\`/l\`) → Leave the queue
-* \`/check\` (\`/c\`) → Check the queue`,
+* Queue: \`/j\`(join) \`/l\`(leave) \`/c\`(check)
+* Your status: \`/b\`(busy) \`/a\`(available)
+* Help menu: \`/h\`(help)`,
       )
       await reactInGroup(groupId, msgKey, '🆘')
       break
@@ -287,6 +286,68 @@ async function handleCommand(
       }
       break
 
+    case '/busy':
+    case '/b':
+      if (!isUserInQueue(groupId, userIds)) {
+        await replyInGroup(
+          groupId,
+          msg,
+          `${username}, you're not in the queue:\n${formatQueueWithMentions(groupId)}`,
+          getQueueMentions(groupId),
+        )
+        await reactInGroup(groupId, msgKey, '❌')
+      } else if (!isUserAvailable(groupId, userIds)) {
+        await replyInGroup(
+          groupId,
+          msg,
+          `${username}, you're already busy:\n${formatQueueWithMentions(groupId)}`,
+          getQueueMentions(groupId),
+        )
+        await reactInGroup(groupId, msgKey, '❌')
+      } else {
+        makeUserAvailable(groupId, userIds, false)
+        await replyInGroup(
+          groupId,
+          msg,
+          `${username}, you're now busy:\n${formatQueueWithMentions(groupId)}`,
+          getQueueMentions(groupId),
+        )
+        await reactInGroup(groupId, msgKey, '⏳')
+        await writeQueueFile()
+      }
+      break
+
+    case '/available':
+    case '/a':
+      if (!isUserInQueue(groupId, userIds)) {
+        await replyInGroup(
+          groupId,
+          msg,
+          `${username}, you're not in the queue:\n${formatQueueWithMentions(groupId)}`,
+          getQueueMentions(groupId),
+        )
+        await reactInGroup(groupId, msgKey, '❌')
+      } else if (isUserAvailable(groupId, userIds)) {
+        await replyInGroup(
+          groupId,
+          msg,
+          `${username}, you're already available:\n${formatQueueWithMentions(groupId)}`,
+          getQueueMentions(groupId),
+        )
+        await reactInGroup(groupId, msgKey, '❌')
+      } else {
+        makeUserAvailable(groupId, userIds, true)
+        await replyInGroup(
+          groupId,
+          msg,
+          `${username}, you're available again:\n${formatQueueWithMentions(groupId)}`,
+          getQueueMentions(groupId),
+        )
+        await reactInGroup(groupId, msgKey, '👍')
+        await writeQueueFile()
+      }
+      break
+
     case '/check':
     case '/c':
       await replyInGroup(
@@ -314,6 +375,7 @@ async function handleCommand(
 interface Customer {
   userIds: Set<string>
   username: string
+  available: boolean
 }
 const GROUP_QUEUES = new Map<string, Customer[]>()
 function getGroupQueue(groupId: string): Customer[] {
@@ -331,6 +393,12 @@ function isUserInQueue(groupId: string, userIds: Set<string>): boolean {
   )
 }
 
+function isUserAvailable(groupId: string, userIds: Set<string>): boolean {
+  return getGroupQueue(groupId).some(
+    (customer) => intersects(customer.userIds, userIds) && customer.available,
+  )
+}
+
 function addUserToQueue(
   groupId: string,
   userIds: Set<string>,
@@ -339,6 +407,7 @@ function addUserToQueue(
   getGroupQueue(groupId).push({
     userIds: userIds,
     username: username,
+    available: true,
   })
 }
 
@@ -348,6 +417,18 @@ function removeUserFromQueue(groupId: string, userIds: Set<string>): void {
     groupId,
     queue.filter((customer) => !intersects(customer.userIds, userIds)),
   )
+}
+
+function makeUserAvailable(
+  groupId: string,
+  userIds: Set<string>,
+  available: boolean,
+): void {
+  const queue = getGroupQueue(groupId)
+  const user = queue.find((customer) => intersects(customer.userIds, userIds))
+  if (user) {
+    user.available = available
+  }
 }
 
 function logQueue(groupId: string): void {
@@ -366,9 +447,10 @@ async function writeQueueFile(): Promise<void> {
     Logger.info(Color.LightBlue, 'Writing queue file')
     const queues = [...GROUP_QUEUES].map(([groupId, customers]) => [
       groupId,
-      customers.map(({ userIds, username }) => ({
+      customers.map(({ userIds, username, available }) => ({
         userIds: [...userIds],
         username,
+        available,
       })),
     ])
     await fs.writeFile(
@@ -387,7 +469,7 @@ async function readQueueFile(): Promise<void> {
     const queueJson = await fs.readFile(getQueueFilepath(), 'utf-8')
     const queues = JSON.parse(queueJson) as [
       string,
-      { userIds: string[]; username: string }[],
+      { userIds: string[]; username: string; available: boolean }[],
     ][]
     GROUP_QUEUES.clear()
     for (const [groupId, customers] of queues) {
@@ -396,6 +478,7 @@ async function readQueueFile(): Promise<void> {
         customers.map((c) => ({
           userIds: new Set(c.userIds),
           username: c.username,
+          available: c.available,
         })),
       )
     }
@@ -423,13 +506,17 @@ function userIdToMention(userId: string): string {
   return `@${numberPart}`
 }
 
+function userAvailableToText(available: boolean): string {
+  return !available ? " — skip me, I'm busy" : ''
+}
+
 function formatQueueWithMentions(groupId: string): string {
   logQueue(groupId)
   return (
     getGroupQueue(groupId)
       .map(
         (customer, i) =>
-          `${i + 1}. ${userIdToMention(Array.from(customer.userIds)[0])}`,
+          `${i + 1}. ${userIdToMention(Array.from(customer.userIds)[0])}${userAvailableToText(customer.available)}`,
       )
       .join('\n') || '—'
   )
