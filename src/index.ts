@@ -363,7 +363,7 @@ async function handleCommand(
       await replyInGroup(
         groupId,
         msg,
-        'Unknown command. Send `/help` for the list of commands.',
+        'Unknown command. Send `/h` for the list of commands.',
       )
       await reactInGroup(groupId, msgKey, '❌')
   }
