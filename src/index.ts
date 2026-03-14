@@ -40,7 +40,7 @@ let socket: WASocket
       for (const groupId of Object.keys(groups)) {
         await postInGroup(
           groupId,
-          'The queue was cleared. Send `/join` to join the queue, `/help` for the list of commands.',
+          'The queue was cleared. Send `/j` to join the queue, `/h` for the list of commands.',
         )
       }
     },
