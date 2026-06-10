@@ -22,7 +22,7 @@
   },
   "homepage": "https://github.com/jaaufauvre/ev-queue-manager#readme",
   "dependencies": {
-    "@whiskeysockets/baileys": "7.0.0-rc.9",
+    "@whiskeysockets/baileys": "7.0.0-rc12",
     "node-cron": "4.2.1",
     "qrcode-terminal": "0.12.0"
   },
