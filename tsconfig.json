@@ -111,5 +111,7 @@
       }
     ],
     "strictNullChecks": true
-  }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["tests/**/*", "dist/**/*"]
 }

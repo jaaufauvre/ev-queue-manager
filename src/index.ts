@@ -23,44 +23,46 @@ let socket: WASocket
 // ---------------------------------------------------------------------------
 // ENTRY POINT
 // ---------------------------------------------------------------------------
-;(async () => {
-  Logger.setDebug(false)
-  Logger.info(Color.Yellow, '🤖 Starting ...')
-  await readQueueFile()
+if (require.main === module) {
+  void (async () => {
+    Logger.setDebug(false)
+    Logger.info(Color.Yellow, '🤖 Starting ...')
+    await readQueueFile()
 
-  // Auto-reset at 6am Dublin Time
-  cron.schedule(
-    '0 6 * * *',
-    async () => {
-      Logger.info(Color.Yellow, '🕓 Scheduled queue reset')
-      await deleteQueueFile()
-      GROUP_QUEUES.clear()
-      PROCESSED_MESSAGES.clear()
-      const groups = await socket.groupFetchAllParticipating()
-      for (const groupId of Object.keys(groups)) {
-        await postInGroup(
-          groupId,
-          'The queue was cleared. Send `/j` to join the queue, `/h` for the list of commands.',
-        )
+    // Auto-reset at 6am Dublin Time
+    cron.schedule(
+      '0 6 * * *',
+      async () => {
+        Logger.info(Color.Yellow, '🕓 Scheduled queue reset')
+        await deleteQueueFile()
+        GROUP_QUEUES.clear()
+        PROCESSED_MESSAGES.clear()
+        const groups = await socket.groupFetchAllParticipating()
+        for (const groupId of Object.keys(groups)) {
+          await postInGroup(
+            groupId,
+            'The queue was cleared. Send `/j` to join the queue, `/h` for the list of commands.',
+          )
+        }
+      },
+      { timezone: 'Europe/Dublin' },
+    )
+
+    // Forever loop
+    let attempt = 0
+    while (true) {
+      attempt++
+      try {
+        Logger.info(`Attempt ${attempt} at connecting to WA ...`)
+        await start()
+      } catch (err) {
+        Logger.error('Unexpected interruption: ' + err)
       }
-    },
-    { timezone: 'Europe/Dublin' },
-  )
-
-  // Forever loop
-  let attempt = 0
-  while (true) {
-    attempt++
-    try {
-      Logger.info(`Attempt ${attempt} at connecting to WA ...`)
-      await start()
-    } catch (err) {
-      Logger.error('Unexpected interruption: ' + err)
+      Logger.info(`Waiting 5s before reconnecting ...`)
+      await new Promise((res) => setTimeout(res, 5000))
     }
-    Logger.info(`Waiting 5s before reconnecting ...`)
-    await new Promise((res) => setTimeout(res, 5000))
-  }
-})()
+  })()
+}
 
 // ---------------------------------------------------------------------------
 // CONNECTION TO WA
@@ -206,12 +208,13 @@ async function handleUserMessages(m: {
       Logger.debug('Message ID already processed, ignoring')
       continue
     }
-    Logger.info(Color.Green, `Command: ${text}`)
+    const command = text.trim()
+    Logger.info(Color.Green, `Command: ${command}`)
     Logger.info(Color.Green, `Username: ${username}`)
     Logger.info(Color.Green, `User IDs: ${[...userIds].join(', ')}`)
     Logger.info(Color.Green, `Group ID: ${groupId}`)
     PROCESSED_MESSAGES.add(uniqueId)
-    await handleCommand(groupId, msgKey, msg, text, userIds, username!)
+    await handleCommand(groupId, msgKey, msg, command, userIds, username!)
   }
 }
 
@@ -226,147 +229,243 @@ async function handleCommand(
   userIds: Set<string>,
   username: string,
 ) {
-  switch (command.toLowerCase().trim()) {
-    case '/help':
-    case '/h':
-      await replyInGroup(
-        groupId,
-        msg,
-        `Available commands:
-* Queue: \`/j\`(join) \`/l\`(leave) \`/c\`(check)
+  const normalizedCommand = command.toLowerCase()
+
+  if (normalizedCommand.length > 80) {
+    await replyInGroup(
+      groupId,
+      msg,
+      'Command length exceeded. Send `/h` for the list of commands.',
+    )
+    await reactInGroup(groupId, msgKey, '❌')
+    return
+  }
+
+  if (normalizedCommand === '/help' || normalizedCommand === '/h') {
+    await reactInGroup(groupId, msgKey, '🆘')
+    await replyInGroup(
+      groupId,
+      msg,
+      `Available commands:
+* Queue: \`/j\`(join) \`/j note\`(join with note) \`/l\`(leave) \`/c\`(check)
 * Your status: \`/b\`(busy) \`/a\`(available)
+* Notes: \`/n note\`(add, update) \`/n\`(clear)
 * Help menu: \`/h\`(help)`,
-      )
-      await reactInGroup(groupId, msgKey, '🆘')
-      break
+    )
+    return
+  }
 
-    case '/join':
-    case '/j':
-      if (!isUserInQueue(groupId, userIds)) {
-        addUserToQueue(groupId, userIds, username)
-        await replyInGroup(
-          groupId,
-          msg,
-          `${username}, you joined the queue:\n${formatQueueWithMentions(groupId)}`,
-          getQueueMentions(groupId),
-        )
-        await reactInGroup(groupId, msgKey, '👍')
-        await writeQueueFile()
-      } else {
-        await replyInGroup(
-          groupId,
-          msg,
-          `${username}, you're already in the queue:\n${formatQueueWithMentions(groupId)}`,
-          getQueueMentions(groupId),
-        )
-        await reactInGroup(groupId, msgKey, '❌')
-      }
-      break
-
-    case '/leave':
-    case '/l':
-      if (!isUserInQueue(groupId, userIds)) {
-        await replyInGroup(
-          groupId,
-          msg,
-          `${username}, you're not in the queue:\n${formatQueueWithMentions(groupId)}`,
-          getQueueMentions(groupId),
-        )
-        await reactInGroup(groupId, msgKey, '❌')
-      } else {
-        removeUserFromQueue(groupId, userIds)
-        await replyInGroup(
-          groupId,
-          msg,
-          `${username}, you left the queue:\n${formatQueueWithMentions(groupId)}`,
-          getQueueMentions(groupId),
-        )
-        await reactInGroup(groupId, msgKey, '👋')
-        await writeQueueFile()
-      }
-      break
-
-    case '/busy':
-    case '/b':
-      if (!isUserInQueue(groupId, userIds)) {
-        await replyInGroup(
-          groupId,
-          msg,
-          `${username}, you're not in the queue:\n${formatQueueWithMentions(groupId)}`,
-          getQueueMentions(groupId),
-        )
-        await reactInGroup(groupId, msgKey, '❌')
-      } else if (!isUserAvailable(groupId, userIds)) {
-        await replyInGroup(
-          groupId,
-          msg,
-          `${username}, you're already busy:\n${formatQueueWithMentions(groupId)}`,
-          getQueueMentions(groupId),
-        )
-        await reactInGroup(groupId, msgKey, '❌')
-      } else {
-        makeUserAvailable(groupId, userIds, false)
-        await replyInGroup(
-          groupId,
-          msg,
-          `${username}, you're now busy:\n${formatQueueWithMentions(groupId)}`,
-          getQueueMentions(groupId),
-        )
-        await reactInGroup(groupId, msgKey, '⏳')
-        await writeQueueFile()
-      }
-      break
-
-    case '/available':
-    case '/a':
-      if (!isUserInQueue(groupId, userIds)) {
-        await replyInGroup(
-          groupId,
-          msg,
-          `${username}, you're not in the queue:\n${formatQueueWithMentions(groupId)}`,
-          getQueueMentions(groupId),
-        )
-        await reactInGroup(groupId, msgKey, '❌')
-      } else if (isUserAvailable(groupId, userIds)) {
-        await replyInGroup(
-          groupId,
-          msg,
-          `${username}, you're already available:\n${formatQueueWithMentions(groupId)}`,
-          getQueueMentions(groupId),
-        )
-        await reactInGroup(groupId, msgKey, '❌')
-      } else {
-        makeUserAvailable(groupId, userIds, true)
-        await replyInGroup(
-          groupId,
-          msg,
-          `${username}, you're available again:\n${formatQueueWithMentions(groupId)}`,
-          getQueueMentions(groupId),
-        )
-        await reactInGroup(groupId, msgKey, '👍')
-        await writeQueueFile()
-      }
-      break
-
-    case '/check':
-    case '/c':
+  if (normalizedCommand === '/leave' || normalizedCommand === '/l') {
+    if (!isUserInQueue(groupId, userIds)) {
       await replyInGroup(
         groupId,
         msg,
-        `Queue:\n${formatQueueWithMentions(groupId)}`,
+        `${username}, you're not in the queue:\n${formatQueueWithMentions(groupId)}`,
         getQueueMentions(groupId),
       )
-      await reactInGroup(groupId, msgKey, '👀')
-      break
+      await reactInGroup(groupId, msgKey, '❌')
+      return
+    }
+    removeUserFromQueue(groupId, userIds)
+    await replyInGroup(
+      groupId,
+      msg,
+      `${username}, you left the queue:\n${formatQueueWithMentions(groupId)}`,
+      getQueueMentions(groupId),
+    )
+    await reactInGroup(groupId, msgKey, '👋')
+    await writeQueueFile()
+    return
+  }
 
-    default:
+  if (normalizedCommand === '/busy' || normalizedCommand === '/b') {
+    if (!isUserInQueue(groupId, userIds)) {
       await replyInGroup(
         groupId,
         msg,
-        'Unknown command. Send `/h` for the list of commands.',
+        `${username}, you're not in the queue:\n${formatQueueWithMentions(groupId)}`,
+        getQueueMentions(groupId),
       )
       await reactInGroup(groupId, msgKey, '❌')
+      return
+    }
+    if (!isUserAvailable(groupId, userIds)) {
+      await replyInGroup(
+        groupId,
+        msg,
+        `${username}, you're already busy:\n${formatQueueWithMentions(groupId)}`,
+        getQueueMentions(groupId),
+      )
+      await reactInGroup(groupId, msgKey, '❌')
+      return
+    }
+    makeUserAvailable(groupId, userIds, false)
+    await replyInGroup(
+      groupId,
+      msg,
+      `${username}, you're now busy:\n${formatQueueWithMentions(groupId)}`,
+      getQueueMentions(groupId),
+    )
+    await reactInGroup(groupId, msgKey, '⏳')
+    await writeQueueFile()
+    return
   }
+
+  if (normalizedCommand === '/available' || normalizedCommand === '/a') {
+    if (!isUserInQueue(groupId, userIds)) {
+      await replyInGroup(
+        groupId,
+        msg,
+        `${username}, you're not in the queue:\n${formatQueueWithMentions(groupId)}`,
+        getQueueMentions(groupId),
+      )
+      await reactInGroup(groupId, msgKey, '❌')
+      return
+    }
+    if (isUserAvailable(groupId, userIds)) {
+      await replyInGroup(
+        groupId,
+        msg,
+        `${username}, you're already available:\n${formatQueueWithMentions(groupId)}`,
+        getQueueMentions(groupId),
+      )
+      await reactInGroup(groupId, msgKey, '❌')
+      return
+    }
+    makeUserAvailable(groupId, userIds, true)
+    await replyInGroup(
+      groupId,
+      msg,
+      `${username}, you're available again:\n${formatQueueWithMentions(groupId)}`,
+      getQueueMentions(groupId),
+    )
+    await reactInGroup(groupId, msgKey, '👍')
+    await writeQueueFile()
+    return
+  }
+
+  if (normalizedCommand === '/check' || normalizedCommand === '/c') {
+    await replyInGroup(
+      groupId,
+      msg,
+      `Queue:\n${formatQueueWithMentions(groupId)}`,
+      getQueueMentions(groupId),
+    )
+    await reactInGroup(groupId, msgKey, '👀')
+    return
+  }
+
+  if (
+    normalizedCommand === '/join' ||
+    normalizedCommand === '/j' ||
+    normalizedCommand.startsWith('/join ') ||
+    normalizedCommand.startsWith('/j ')
+  ) {
+    if (isUserInQueue(groupId, userIds)) {
+      await replyInGroup(
+        groupId,
+        msg,
+        `${username}, you're already in the queue:\n${formatQueueWithMentions(groupId)}`,
+        getQueueMentions(groupId),
+      )
+      await reactInGroup(groupId, msgKey, '❌')
+      return
+    }
+    if (!hasValidNote(command)) {
+      await replyInGroup(
+        groupId,
+        msg,
+        'Invalid note. Send `/h` for the list of commands.',
+      )
+      await reactInGroup(groupId, msgKey, '❌')
+      return
+    }
+    addUserToQueue(groupId, userIds, username, extractNote(command))
+    await replyInGroup(
+      groupId,
+      msg,
+      `${username}, you joined the queue:\n${formatQueueWithMentions(groupId)}`,
+      getQueueMentions(groupId),
+    )
+    await reactInGroup(groupId, msgKey, '👍')
+    await writeQueueFile()
+    return
+  }
+
+  if (normalizedCommand === '/note' || normalizedCommand === '/n') {
+    if (!isUserInQueue(groupId, userIds)) {
+      await replyInGroup(
+        groupId,
+        msg,
+        `${username}, you're not in the queue:\n${formatQueueWithMentions(groupId)}`,
+        getQueueMentions(groupId),
+      )
+      await reactInGroup(groupId, msgKey, '❌')
+      return
+    }
+    if (!isUserWithNote(groupId, userIds)) {
+      await replyInGroup(
+        groupId,
+        msg,
+        `${username}, you don't have a note:\n${formatQueueWithMentions(groupId)}`,
+        getQueueMentions(groupId),
+      )
+      await reactInGroup(groupId, msgKey, '❌')
+      return
+    }
+    updateUserNote(groupId, userIds, undefined)
+    await replyInGroup(
+      groupId,
+      msg,
+      `${username}, your note was cleared:\n${formatQueueWithMentions(groupId)}`,
+      getQueueMentions(groupId),
+    )
+    await reactInGroup(groupId, msgKey, '👍')
+    await writeQueueFile()
+    return
+  }
+
+  if (
+    normalizedCommand.startsWith('/note ') ||
+    normalizedCommand.startsWith('/n ')
+  ) {
+    if (!isUserInQueue(groupId, userIds)) {
+      await replyInGroup(
+        groupId,
+        msg,
+        `${username}, you're not in the queue:\n${formatQueueWithMentions(groupId)}`,
+        getQueueMentions(groupId),
+      )
+      await reactInGroup(groupId, msgKey, '❌')
+      return
+    }
+    if (!hasValidNote(command)) {
+      await replyInGroup(
+        groupId,
+        msg,
+        'Invalid note. Send `/h` for the list of commands.',
+      )
+      await reactInGroup(groupId, msgKey, '❌')
+      return
+    }
+    updateUserNote(groupId, userIds, extractNote(command))
+    await replyInGroup(
+      groupId,
+      msg,
+      `${username}, your note was updated:\n${formatQueueWithMentions(groupId)}`,
+      getQueueMentions(groupId),
+    )
+    await reactInGroup(groupId, msgKey, '📝')
+    await writeQueueFile()
+    return
+  }
+
+  await replyInGroup(
+    groupId,
+    msg,
+    'Unknown command. Send `/h` for the list of commands.',
+  )
+  await reactInGroup(groupId, msgKey, '❌')
 }
 
 // ---------------------------------------------------------------------------
@@ -376,6 +475,7 @@ interface Customer {
   userIds: Set<string>
   username: string
   available: boolean
+  note?: string
 }
 const GROUP_QUEUES = new Map<string, Customer[]>()
 function getGroupQueue(groupId: string): Customer[] {
@@ -399,15 +499,23 @@ function isUserAvailable(groupId: string, userIds: Set<string>): boolean {
   )
 }
 
+function isUserWithNote(groupId: string, userIds: Set<string>): boolean {
+  return getGroupQueue(groupId).some(
+    (customer) => intersects(customer.userIds, userIds) && customer.note,
+  )
+}
+
 function addUserToQueue(
   groupId: string,
   userIds: Set<string>,
   username: string,
+  note?: string,
 ): void {
   getGroupQueue(groupId).push({
     userIds: userIds,
     username: username,
     available: true,
+    note: note,
   })
 }
 
@@ -431,6 +539,18 @@ function makeUserAvailable(
   }
 }
 
+function updateUserNote(
+  groupId: string,
+  userIds: Set<string>,
+  note?: string,
+): void {
+  const queue = getGroupQueue(groupId)
+  const user = queue.find((customer) => intersects(customer.userIds, userIds))
+  if (user) {
+    user.note = note
+  }
+}
+
 function logQueue(groupId: string): void {
   Logger.info(
     Color.Yellow,
@@ -440,6 +560,7 @@ function logQueue(groupId: string): void {
           userIds: [...customer.userIds],
           username: customer.username,
           available: customer.available,
+          note: customer.note,
         })),
       ),
   )
@@ -457,10 +578,11 @@ async function writeQueueFile(): Promise<void> {
     Logger.info(Color.LightBlue, 'Writing queue file')
     const queues = [...GROUP_QUEUES].map(([groupId, customers]) => [
       groupId,
-      customers.map(({ userIds, username, available }) => ({
+      customers.map(({ userIds, username, available, note }) => ({
         userIds: [...userIds],
         username,
         available,
+        note,
       })),
     ])
     await fs.writeFile(
@@ -479,7 +601,12 @@ async function readQueueFile(): Promise<void> {
     const queueJson = await fs.readFile(getQueueFilepath(), 'utf-8')
     const queues = JSON.parse(queueJson) as [
       string,
-      { userIds: string[]; username: string; available: boolean }[],
+      {
+        userIds: string[]
+        username: string
+        available: boolean
+        note?: string
+      }[],
     ][]
     GROUP_QUEUES.clear()
     for (const [groupId, customers] of queues) {
@@ -489,6 +616,7 @@ async function readQueueFile(): Promise<void> {
           userIds: new Set(c.userIds),
           username: c.username,
           available: c.available,
+          note: c.note,
         })),
       )
     }
@@ -511,13 +639,41 @@ async function deleteQueueFile(): Promise<void> {
 // ---------------------------------------------------------------------------
 const PROCESSED_MESSAGES = new Set<string>()
 
+// A valid note is 0–80 characters of letters, numbers, spaces, punctuation, or emoji—but no forward slashes or @ signs or formatting
+export function hasValidNote(command: string): boolean {
+  const note = command.replace(/\/(join|note|j|n)\s*/i, '').trim()
+  return /^(?!.*[/@~_*`])[\p{L}\p{M}\p{N}\p{Zs}\p{P}\p{S}]{0,80}$/u.test(note)
+}
+
+export function extractNote(command: string): string | undefined {
+  if (!hasValidNote(command)) {
+    return undefined
+  }
+  const note = command.replace(/\/(join|note|j|n)\s*/i, '').trim()
+  if (note.length === 0) {
+    return undefined
+  }
+  if (note.length > 40) {
+    return Array.from(note).slice(0, 40).join('') + '…' // 40 first "visible" chars only
+  }
+  return note
+}
+
 function userIdToMention(userId: string): string {
   const numberPart = userId.split('@')[0]
   return `@${numberPart}`
 }
 
-function userAvailableToText(available: boolean): string {
-  return !available ? " — skip me, I'm busy" : ''
+function customerToNote(customer: Customer): string {
+  const available = customer.available
+  const note = customer.note
+  if (!available) {
+    return " — skip me, I'm busy"
+  }
+  if (note) {
+    return ` — ${note}`
+  }
+  return ''
 }
 
 function formatQueueWithMentions(groupId: string): string {
@@ -526,7 +682,7 @@ function formatQueueWithMentions(groupId: string): string {
     getGroupQueue(groupId)
       .map(
         (customer, i) =>
-          `${i + 1}. ${userIdToMention(Array.from(customer.userIds)[0])}${userAvailableToText(customer.available)}`,
+          `${i + 1}. ${userIdToMention(Array.from(customer.userIds)[0])}${customerToNote(customer)}`,
       )
       .join('\n') || '—'
   )
