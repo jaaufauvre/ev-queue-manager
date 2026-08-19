@@ -20,6 +20,24 @@ import qrcode from 'qrcode-terminal'
 // ---------------------------------------------------------------------------
 let socket: WASocket
 
+const DAILY_QUEUE_RESET_TIPS = [
+  'Add your parking space when joining: `/j in 23, ground floor`',
+  'Parked beside an EV bay? Use: `/j in 78, can 79 please plug me?`',
+  'In a meeting later on? Send `/b` to mark yourself busy, `/a` to return.',
+  'To share a charger preference: `/j in 75, basement charger`',
+  "After plugging in, don't forget to leave the queue: `/l`",
+  'Send `/j` to join the queue, `/h` for the list of commands.',
+] as const
+
+export function getQueueResetMessage(): string {
+  const tip =
+    DAILY_QUEUE_RESET_TIPS[
+      Math.floor(Math.random() * DAILY_QUEUE_RESET_TIPS.length)
+    ]
+
+  return `The queue has been cleared for today.\n\nQuick tip — ${tip}`
+}
+
 // ---------------------------------------------------------------------------
 // ENTRY POINT
 // ---------------------------------------------------------------------------
@@ -39,10 +57,7 @@ if (require.main === module) {
         PROCESSED_MESSAGES.clear()
         const groups = await socket.groupFetchAllParticipating()
         for (const groupId of Object.keys(groups)) {
-          await postInGroup(
-            groupId,
-            'The queue was cleared. Send `/j` to join the queue, `/h` for the list of commands.',
-          )
+          await postInGroup(groupId, getQueueResetMessage())
         }
       },
       { timezone: 'Europe/Dublin' },
